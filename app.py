@@ -14,8 +14,8 @@ WORKSHEET_NAME = "Movimientos"
 
 # 👇 REEMPLAZÁ CON LOS NÚMEROS REALES
 ALIAS = {
-    "whatsapp:+54911XXXXXXXX": "Facu",
-    "whatsapp:+54911YYYYYYYY": "Lu"
+    "whatsapp:+5491127612224": "Facu",
+    "whatsapp:+5491154047615": "Lu"
 }
 
 SCOPES = [
