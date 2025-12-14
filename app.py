@@ -1,57 +1,61 @@
 from flask import Flask, request
 from datetime import datetime
+import gspread
+import json
 import os
-from openpyxl import Workbook, load_workbook
+from google.oauth2.service_account import Credentials
 
 app = Flask(__name__)
 
-FILE = "gastos.xlsx"
-SHEET = "Movimientos"
+# === CONFIG ===
+SPREADSHEET_ID = "1xdvTSP430mOdFmmT4jSlYdJAsxK_92oozURlmgfTdkU"      # <- pegá el ID real
+WORKSHEET_NAME = "Movimientos"        # <- pestaña exacta
 
-# Mapeo opcional: cambiá por sus números reales (formato Twilio: whatsapp:+54...)
-ALIAS = {
-    # "whatsapp:+54911XXXXXXXX": "Facu",
-    # "whatsapp:+54911YYYYYYYY": "Novi",
-}
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-def registrar_gasto(monto: int, categoria: str, descripcion: str, who: str):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def get_worksheet():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        raise Exception("No se encontró la variable GOOGLE_CREDENTIALS_JSON")
 
-    if os.path.exists(FILE):
-        wb = load_workbook(FILE)
-        ws = wb[SHEET] if SHEET in wb.sheetnames else wb.create_sheet(SHEET)
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = SHEET
-        ws.append(["fecha", "monto", "categoria", "descripcion", "quien", "from_raw"])
+    creds_dict = json.loads(creds_json)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    client = gspread.authorize(credentials)
 
-    nombre = ALIAS.get(who, who)
-    ws.append([ts, monto, categoria.lower(), descripcion, nombre, who])
-    wb.save(FILE)
+    sh = client.open_by_key(SPREADSHEET_ID)
+    ws = sh.worksheet(WORKSHEET_NAME)
+    return ws
 
-def parsear(texto: str):
-    # Formato recomendado: gasto <monto> <categoria> [descripcion]
+def parsear_mensaje(texto: str):
     parts = texto.strip().split()
     if len(parts) < 3 or parts[0].lower() != "gasto":
-        raise ValueError("Usá: gasto <monto> <categoria> [descripcion]. Ej: gasto 10000 supermercado")
+        raise ValueError("Usá: gasto <monto> <categoria> [detalle]. Ej: gasto 10000 supermercado")
+
     monto = int(parts[1].replace(".", "").replace(",", ""))
     categoria = parts[2]
     descripcion = " ".join(parts[3:]) if len(parts) > 3 else ""
     return monto, categoria, descripcion
 
+def registrar_gasto(monto, categoria, descripcion, quien):
+    ws = get_worksheet()
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.append_row([fecha, monto, categoria.lower(), descripcion, quien])
+
 @app.route("/twilio", methods=["POST"])
-def inbound():
+def twilio_webhook():
     texto = request.form.get("Body", "")
-    who = request.form.get("From", "")  # <- identifica quién mandó el mensaje
+    quien = request.form.get("From", "")
 
     try:
-        monto, cat, desc = parsear(texto)
-        registrar_gasto(monto, cat, desc, who)
+        monto, categoria, descripcion = parsear_mensaje(texto)
+        registrar_gasto(monto, categoria, descripcion, quien)
 
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>✅ Registrado: ${monto} en {cat}. {('(' + desc + ')') if desc else ''}</Message>
+  <Message>✅ Registrado: ${monto} en {categoria}. {('(' + descripcion + ')') if descripcion else ''}</Message>
 </Response>""", 200, {"Content-Type": "application/xml"}
 
     except Exception as e:
@@ -59,6 +63,3 @@ def inbound():
 <Response>
   <Message>❌ {str(e)}</Message>
 </Response>""", 200, {"Content-Type": "application/xml"}
-
-if __name__ == "__main__":
-    app.run(port=5000)
